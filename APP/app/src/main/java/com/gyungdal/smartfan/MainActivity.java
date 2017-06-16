@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.os.Build;
 import android.os.Handler;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
@@ -22,15 +23,16 @@ import android.widget.ToggleButton;
 
 import com.triggertrap.seekarc.SeekArc;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
 public class MainActivity extends AppCompatActivity {
-
     // 사용자 정의 함수로 블루투스 활성 상태의 변경 결과를 App으로 알려줄때 식별자로 사용됨(0보다 커야함)
     static final int REQUEST_ENABLE_BT = 10;
     int mPariedDeviceCount = 0;
@@ -54,32 +56,21 @@ public class MainActivity extends AppCompatActivity {
     char mCharDelimiter =  '\n';
 
 
+    private SeekArc seekBar;
+    private TextView seekBarValue;
+    private ToggleButton turnSwitch;
+
     Thread mWorkerThread = null;
     byte[] readBuffer;
     int readBufferPosition;
 
-    private SeekArc seekBar;
-    private TextView seekBarValue;
-    private ToggleButton turnSwitch;
+
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        /*mEditReceive = (EditText)findViewById(R.id.receiveString);
-        mEditSend = (EditText)findViewById(R.id.sendString);
-        mButtonSend = (Button)findViewById(R.id.sendButton);
-
-        mButtonSend.setOnClickListener(new OnClickListener(){
-
-            @Override
-            public void onClick(View v) {
-                // 문자열 전송하는 함수(쓰레드 사용 x)
-                sendData(mEditSend.getText().toString());
-                mEditSend.setText("");
-            }
-        });
-*/
         // 블루투스 활성화 시키는 메소드
         seekBar = (SeekArc)findViewById(R.id.seekBar);
         seekBarValue = (TextView)findViewById(R.id.seekBarValue);
@@ -89,7 +80,7 @@ public class MainActivity extends AppCompatActivity {
             public void onProgressChanged(SeekArc seekArc, int i, boolean b) {
                 Log.i("SEEKBAR", String.valueOf(i));
                 seekBarValue.setText(String.valueOf(i));
-                sendData("power=" + i);
+                sendData(("power=" + i).trim());
             }
 
             @Override
@@ -106,10 +97,12 @@ public class MainActivity extends AppCompatActivity {
         turnSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
-                sendData("turn=" + (isChecked ? "true" : "false"));
+                sendData(("turn=" + (isChecked ? "true" : "false")).trim());
             }
         });
-        //checkBluetooth();
+
+        // 블루투스 활성화 시키는 메소드
+        checkBluetooth();
     }
 
     // 블루투스 장치의 이름이 주어졌을때 해당 블루투스 장치 객체를 페어링 된 장치 목록에서 찾아내는 코드.
@@ -129,13 +122,14 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // 문자열 전송하는 함수(쓰레드 사용 x)
-    void sendData(String msg) {
-        msg += mStrDelimiter;  // 문자열 종료표시 (\n)
+    synchronized void sendData(String msg) {
+        //msg += mStrDelimiter;  // 문자열 종료표시 (\n)
         try{
             // getBytes() : String을 byte로 변환
             // OutputStream.write : 데이터를 쓸때는 write(byte[]) 메소드를 사용함.
             // byte[] 안에 있는 데이터를 한번에 기록해 준다.
-            mOutputStream.write(msg.getBytes("UTF-8"));  // 문자열 전송.
+            mOutputStream.write(msg.getBytes());  // 문자열 전송.
+            Thread.sleep(10);
         }catch(Exception e) {  // 문자열 전송 도중 오류가 발생한 경우
             Toast.makeText(getApplicationContext(), "데이터 전송중 오류가 발생",
                     Toast.LENGTH_LONG).show();
@@ -149,7 +143,7 @@ public class MainActivity extends AppCompatActivity {
         // BluetoothDevice 원격 블루투스 기기를 나타냄.
         mRemoteDevie = getDeviceFromBondedList(selectedDeviceName);
         // java.util.UUID.fromString : 자바에서 중복되지 않는 Unique 키 생성.
-        UUID uuid = UUID.randomUUID();
+        UUID uuid = java.util.UUID.fromString("00001101-0000-1000-8000-00805f9b34fb");
 
         try {
             // 소켓 생성, RFCOMM 채널을 통한 연결.
@@ -185,57 +179,60 @@ public class MainActivity extends AppCompatActivity {
         readBuffer = new byte[1024];            // 수신 버퍼.
 
         // 문자열 수신 쓰레드.
-        mWorkerThread = new Thread(new Runnable()
-        {
-            @Override
-            public void run() {
-                // interrupt() 메소드를 이용 스레드를 종료시키는 예제이다.
-                // interrupt() 메소드는 하던 일을 멈추는 메소드이다.
-                // isInterrupted() 메소드를 사용하여 멈추었을 경우 반복문을 나가서 스레드가 종료하게 된다.
-                while(!Thread.currentThread().isInterrupted()) {
-                    try {
-                        // InputStream.available() : 다른 스레드에서 blocking 하기 전까지 읽은 수 있는 문자열 개수를 반환함.
-                        int byteAvailable = mInputStream.available();   // 수신 데이터 확인
-                        if(byteAvailable > 0) {                        // 데이터가 수신된 경우.
-                            byte[] packetBytes = new byte[byteAvailable];
-                            // read(buf[]) : 입력스트림에서 buf[] 크기만큼 읽어서 저장 없을 경우에 -1 리턴.
-                            mInputStream.read(packetBytes);
-                            for(int i=0; i<byteAvailable; i++) {
-                                byte b = packetBytes[i];
-                                if(b == mCharDelimiter) {
-                                    byte[] encodedBytes = new byte[readBufferPosition];
-                                    //  System.arraycopy(복사할 배열, 복사시작점, 복사된 배열, 붙이기 시작점, 복사할 개수)
-                                    //  readBuffer 배열을 처음 부터 끝까지 encodedBytes 배열로 복사.
-                                    System.arraycopy(readBuffer, 0, encodedBytes, 0, encodedBytes.length);
-                                    final String data = new String(encodedBytes, "UTF-8");
-                                    readBufferPosition = 0;
-
-                                    handler.post(new Runnable(){
-                                        // 수신된 문자열 데이터에 대한 처리.
-                                        @Override
-                                        public void run() {
-
-                                            // mStrDelimiter = '\n';
-                                            //mEditReceive.setText(mEditReceive.getText().toString() + data+ mStrDelimiter);
-                                        }
-
-                                    });
-                                }
-                                else {
-                                    readBuffer[readBufferPosition++] = b;
-                                }
-                            }
-                        }
-
-                    } catch (Exception e) {    // 데이터 수신 중 오류 발생.
-                        Toast.makeText(getApplicationContext(), "데이터 수신 중 오류가 발생 했습니다.", Toast.LENGTH_LONG).show();
-                        finish();            // App 종료.
-                    }
-                }
-            }
-
-        });
-
+        //mWorkerThread = new Thread(new Runnable() {
+        //    @Override
+        //    public void run() {
+        //        while(true) {
+        //            try {
+        //                // InputStream.available() : 다른 스레드에서 blocking 하기 전까지 읽은 수 있는 문자열 개수를 반환함.
+        //                int byteAvailable = mInputStream.available();   // 수신 데이터 확인
+        //                if(byteAvailable > 0) {                        // 데이터가 수신된 경우.
+        //                    byte[] packetBytes = new byte[byteAvailable];
+        //                    // read(buf[]) : 입력스트림에서 buf[] 크기만큼 읽어서 저장 없을 경우에 -1 리턴.
+        //                    mInputStream.read(packetBytes);
+        //                    for(int i=0; i<byteAvailable; i++) {
+        //                        byte b = packetBytes[i];
+        //                        if(b == mCharDelimiter) {
+        //                            byte[] encodedBytes = new byte[readBufferPosition];
+        //                            //  System.arraycopy(복사할 배열, 복사시작점, 복사된 배열, 붙이기 시작점, 복사할 개수)
+        //                            //  readBuffer 배열을 처음 부터 끝까지 encodedBytes 배열로 복사.
+        //                            System.arraycopy(readBuffer, 0, encodedBytes, 0, encodedBytes.length);
+//
+        //                            final String data = new String(encodedBytes);
+        //                            readBufferPosition = 0;
+//
+        //                            handler.post(new Runnable(){
+        //                                // 수신된 문자열 데이터에 대한 처리.
+        //                                @Override
+        //                                public void run() {
+        //                                    //mStrDelimiter = '\n';
+        //                                    Log.i("RECEIVE", data);
+        //                                    int power = Integer.valueOf(data.substring(data.indexOf('=') + 1, data.indexOf('&')));
+        //                                    boolean turn = (Integer.valueOf(data.substring(data.lastIndexOf('=') + 1)) != 0);
+        //                                    seekBar.setProgress(power);
+        //                                    seekBarValue.setText(power);
+        //                                    turnSwitch.setChecked(turn);
+        //                                    //mEditReceive.setText(mEditReceive.getText().toString() + data+ mStrDelimiter);
+        //                                }
+//
+        //                            });
+        //                        }
+        //                        else {
+        //                            readBuffer[readBufferPosition++] = b;
+        //                        }
+        //                    }
+        //                }
+//
+        //            } catch (Exception e) {    // 데이터 수신 중 오류 발생.
+        //                Toast.makeText(getApplicationContext(), "데이터 수신 중 오류가 발생 했습니다.", Toast.LENGTH_LONG).show();
+        //                finish();            // App 종료.
+        //            }
+        //        }
+//
+        //    }
+        //});
+        //mWorkerThread.start();
+        sendData("TEST");
     }
 
     // 블루투스 지원하며 활성 상태인 경우.
